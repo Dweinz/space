@@ -40,6 +40,16 @@ describe('GameState', () => {
     expect(s.res.metal).toBe(before - 30);
   });
 
+  it('locks advanced chambers behind research and tech prerequisites', () => {
+    const s = new GameState(calm);
+    expect(s.requestBuild(1, 0, 'hydro').ok).toBe(false); // needs Hydroponics research
+    expect(s.unlockTech('medicine').ok).toBe(false); // needs Hydroponics first
+    s.res.rp = 500;
+    expect(s.unlockTech('hydro').ok).toBe(true);
+    expect(s.unlockTech('medicine').ok).toBe(true);
+    expect(s.requestBuild(1, 0, 'hydro').ok).toBe(true);
+  });
+
   it('reports the metal income from salvage crew', () => {
     const s = new GameState(calm);
     expect(s.metalPerSecond()).toBeCloseTo(0.45); // one salvage crew at the start

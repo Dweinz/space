@@ -1,11 +1,11 @@
 // Pure simulation: no Phaser or DOM. The scene and HUD read from this and call into it.
 
-export type RoomKind = 'core' | 'life' | 'lab' | 'dock' | 'quarters';
+export type RoomKind = 'core' | 'life' | 'lab' | 'dock' | 'quarters' | 'hydro' | 'workshop' | 'medbay';
 export type BuildKind = Exclude<RoomKind, 'core'>;
 export type Job = 'idle' | 'engineer' | 'salvage' | 'research' | 'trade';
 export type Resource = 'metal' | 'energy' | 'food' | 'credits' | 'rp' | 'plating';
 export type Cost = Partial<Record<Resource, number>>;
-export type TechId = 'plating' | 'hydro' | 'scrub' | 'drones';
+export type TechId = 'plating' | 'scrub' | 'drones' | 'hydro' | 'workshop' | 'medicine' | 'trade';
 export type Rng = () => number;
 
 export interface Room { id: number; x: number; y: number; kind: RoomKind; o2: number; breach: number }
@@ -16,11 +16,15 @@ export interface Ship { id: number; kind: 'trader' | 'recruiter'; offer: Offer; 
 export interface Build { x: number; y: number; kind: BuildKind; progress: number }
 export interface Result { ok: boolean; msg: string }
 
-export const BUILD_INFO: Record<BuildKind, { label: string; cost: Cost }> = {
+/** `unlock` is the tech that must be researched before this chamber can be built. */
+export const BUILD_INFO: Record<BuildKind, { label: string; cost: Cost; unlock?: TechId }> = {
   life: { label: 'Life support', cost: { metal: 35, energy: 20 } },
   lab: { label: 'Laboratory', cost: { metal: 30, energy: 15 } },
   dock: { label: 'Docking bay', cost: { metal: 40, energy: 10 } },
   quarters: { label: 'Quarters', cost: { metal: 20, energy: 5 } },
+  hydro: { label: 'Hydroponics', cost: { metal: 30, energy: 10 }, unlock: 'hydro' },
+  workshop: { label: 'Workshop', cost: { metal: 45, energy: 25 }, unlock: 'workshop' },
+  medbay: { label: 'Medbay', cost: { metal: 40, energy: 20 }, unlock: 'medicine' },
 };
 
 export const ROOM_LABEL: Record<RoomKind, string> = {
@@ -29,13 +33,20 @@ export const ROOM_LABEL: Record<RoomKind, string> = {
   lab: 'Laboratory',
   dock: 'Docking bay',
   quarters: 'Quarters',
+  hydro: 'Hydroponics',
+  workshop: 'Workshop',
+  medbay: 'Medbay',
 };
 
-export const TECHS: Record<TechId, { name: string; cost: number; desc: string }> = {
+/** `req` is the tech that must be learned first. */
+export const TECHS: Record<TechId, { name: string; cost: number; desc: string; req?: TechId }> = {
   plating: { name: 'Reinforced plating', cost: 25, desc: 'Chambers cost 25% less' },
-  hydro: { name: 'Hydroponics', cost: 35, desc: '+1 food per second' },
   scrub: { name: 'Scrubber arrays', cost: 40, desc: 'Oxygen generation +50%' },
   drones: { name: 'Salvage drones', cost: 30, desc: 'Salvage yields +50%' },
+  hydro: { name: 'Hydroponics', cost: 35, desc: 'Unlocks Hydroponics: grows food' },
+  workshop: { name: 'Automated engineering', cost: 50, desc: 'Unlocks Workshop: builds 50% faster', req: 'plating' },
+  medicine: { name: 'Field medicine', cost: 45, desc: 'Unlocks Medbay: crew heal much faster', req: 'hydro' },
+  trade: { name: 'Trade licenses', cost: 60, desc: 'Visitors stay 50% longer', req: 'drones' },
 };
 
 const TRADE_OFFERS: Offer[] = [
@@ -58,7 +69,9 @@ const BREACH_LEAK = 6;
 const BREACH_REPAIR = 6; // engineer-seconds
 const BUILD_SECONDS = 12; // engineer-seconds
 const FOOD_PER_CREW = 0.04;
-const HYDRO_FOOD = 1;
+const HYDRO_FOOD = 1.5; // per Hydroponics chamber
+const BASE_HEAL = 0.5;
+const MEDBAY_HEAL = 4;
 const RP_RATE = 0.5;
 const SALVAGE_EVERY = 8;
 const SHIP_STAY = 30;
@@ -172,6 +185,8 @@ export class GameState {
     if (this.builds.some(b => b.x === x && b.y === y)) return fail('Already being built here.');
     if (!this.canBuild(x, y)) return fail('Tap a glowing slot next to the station.');
     const label = BUILD_INFO[kind].label;
+    const unlock = BUILD_INFO[kind].unlock;
+    if (unlock && !this.has(unlock)) return fail(`Research ${TECHS[unlock].name} to unlock ${label}.`);
     if (this.res.plating >= 1) {
       this.res.plating -= 1;
     } else {
@@ -200,6 +215,7 @@ export class GameState {
   unlockTech(id: TechId): Result {
     const t = TECHS[id];
     if (this.techs.has(id)) return fail('Already learned.');
+    if (t.req && !this.techs.has(t.req)) return fail(`Learn ${TECHS[t.req].name} first.`);
     if (this.res.rp < t.cost) return fail(`Needs ${t.cost} RP.`);
     this.res.rp -= t.cost;
     this.techs.add(id);
@@ -249,12 +265,13 @@ export class GameState {
       const crew = this.crewIn(r.id);
       r.o2 = clamp(r.o2 - (crew * O2_PER_CREW + (r.breach > 0 ? BREACH_LEAK : 0)) * dt);
     }
-    const hydro = this.has('hydro') ? HYDRO_FOOD : 0;
-    this.res.food = Math.max(0, this.res.food + (hydro - this.workers.length * FOOD_PER_CREW) * dt);
+    const farmed = this.count('hydro') * HYDRO_FOOD;
+    this.res.food = Math.max(0, this.res.food + (farmed - this.workers.length * FOOD_PER_CREW) * dt);
     const starving = this.res.food <= 0;
+    const heal = this.count('medbay') > 0 ? MEDBAY_HEAL : BASE_HEAL;
     for (const w of this.workers) {
       if (this.room(w.roomId).o2 < SUFFOCATE_BELOW) w.health -= 2 * dt;
-      else w.health = Math.min(100, w.health + 0.5 * dt);
+      else w.health = Math.min(100, w.health + heal * dt);
       if (starving) w.health -= dt;
     }
     for (const w of this.workers.filter(w => w.health <= 0)) this.say(`${w.name} did not make it.`);
@@ -269,7 +286,8 @@ export class GameState {
       if (breached.breach === 0) this.say(`Breach sealed in ${ROOM_LABEL[breached.kind]}.`);
     } else if (engineers > 0 && this.builds.length > 0) {
       const b = this.builds[0];
-      b.progress += (engineers * dt) / BUILD_SECONDS;
+      const speed = this.count('workshop') > 0 ? 1.5 : 1;
+      b.progress += (engineers * speed * dt) / BUILD_SECONDS;
       if (b.progress >= 1) {
         this.builds.shift();
         this.completeBuild(b);
@@ -344,7 +362,8 @@ export class GameState {
   private spawnShip(): void {
     const recruiter = this.rng() < 0.5;
     const offer = recruiter ? RECRUIT_OFFER : this.pick(TRADE_OFFERS);
-    this.ships.push({ id: this.nextId++, kind: recruiter ? 'recruiter' : 'trader', offer, timeLeft: SHIP_STAY });
+    const stay = this.has('trade') ? SHIP_STAY * 1.5 : SHIP_STAY;
+    this.ships.push({ id: this.nextId++, kind: recruiter ? 'recruiter' : 'trader', offer, timeLeft: stay });
     this.say(`${recruiter ? 'Recruiter' : 'Trader'} ship requests docking.`);
   }
 

@@ -10,6 +10,7 @@ import {
   type TechId,
 } from '@/sim/game-state';
 
+
 // Shared UI choice: which chamber type a click on a build slot places.
 export const ui: { buildKind: BuildKind } = { buildKind: 'lab' };
 
@@ -89,9 +90,12 @@ function render(): void {
       (Object.keys(TECHS) as TechId[])
         .map(id => {
           const t = TECHS[id];
+          const locked = t.req !== undefined && !s.techs.has(t.req);
           const action = s.techs.has(id)
             ? '<span class="good">learned</span>'
-            : `<button data-act="tech" data-val="${id}" ${s.res.rp >= t.cost ? '' : 'class="dim"'}>${Math.floor(s.res.rp)} / ${t.cost} RP</button>`;
+            : locked
+              ? `<span class="dim">needs ${TECHS[t.req as TechId].name}</span>`
+              : `<button data-act="tech" data-val="${id}" class="${s.res.rp >= t.cost ? '' : 'blocked'}">${Math.floor(s.res.rp)} / ${t.cost} RP</button>`;
           return `<div class="row"><div><b>${t.name}</b><small>${t.desc}</small></div>${action}</div>`;
         })
         .join(''),
@@ -118,12 +122,18 @@ function render(): void {
   };
   const palette = (Object.keys(BUILD_INFO) as BuildKind[])
     .map(k => {
-      const short = missing(k);
+      const unlock = BUILD_INFO[k].unlock;
+      const locked = unlock !== undefined && !s.techs.has(unlock);
+      const short = locked ? [] : missing(k);
       const cost = Object.entries(s.buildCost(k))
         .map(([r, v]) => `${v} ${r}`)
         .join(' · ');
-      const cls = [ui.buildKind === k ? 'on' : '', short.length ? 'blocked' : ''].join(' ');
-      const line = short.length ? `need ${short.join(', ')}` : cost;
+      const cls = [ui.buildKind === k ? 'on' : '', short.length || locked ? 'blocked' : ''].join(' ');
+      const line = locked
+        ? `research ${TECHS[unlock as TechId].name} first`
+        : short.length
+          ? `need ${short.join(', ')}`
+          : cost;
       return `<button data-act="kind" data-val="${k}" class="${cls}">${BUILD_INFO[k].label}<small>${line}</small></button>`;
     })
     .join('');
@@ -136,10 +146,13 @@ function render(): void {
       : rate > 0
         ? ` About ${Math.ceil(shortMetal / rate)}s of salvage to go (metal ≈ ${rate.toFixed(2)}/s).`
         : ' Assign a crew member to Salvage to earn metal.';
+  const chamberUnlock = BUILD_INFO[chamber].unlock;
   const status =
-    s.res.plating >= 1
-      ? 'A plating token is ready: the next chamber is free.'
-      : missing(chamber).length
+    chamberUnlock && !s.techs.has(chamberUnlock)
+      ? `${BUILD_INFO[chamber].label} needs research: learn ${TECHS[chamberUnlock].name} in the Research menu.`
+      : s.res.plating >= 1
+        ? 'A plating token is ready: the next chamber is free.'
+        : missing(chamber).length
         ? `${BUILD_INFO[chamber].label} needs ${missing(chamber).join(', ')}.${eta}`
         : 'Pick a chamber, then tap a glowing slot.';
   put('palette', `${palette}<span class="dim">${status}</span>`);

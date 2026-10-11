@@ -15,6 +15,9 @@ const ACCENT: Record<RoomKind, number> = {
   lab: 0xb48cff,
   dock: 0xf5c451,
   quarters: 0x7fb2ff,
+  hydro: 0x4fe0a8,
+  workshop: 0xe8a04a,
+  medbay: 0xf08ac8,
 };
 
 type Pt = [number, number];
