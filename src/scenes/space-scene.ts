@@ -147,9 +147,8 @@ export class SpaceScene extends Phaser.Scene {
       }
     }
     const [x, y] = this.cellAt(p);
-    if (!this.state.canBuild(x, y)) return;
     const res = this.state.requestBuild(x, y, ui.buildKind);
-    if (!res.ok) hud.toast(res.msg);
+    if (!res.ok) hud.toast(res.msg); // say why, so a missed tap or a shortage is never silent
     hud.render();
   }
 

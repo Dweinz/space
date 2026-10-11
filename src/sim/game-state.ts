@@ -158,13 +158,18 @@ export class GameState {
   }
 
   requestBuild(x: number, y: number, kind: BuildKind): Result {
-    if (!this.canBuild(x, y)) return fail('Chambers must attach to the station.');
+    if (this.roomAt(x, y)) return fail('That spot already has a chamber.');
+    if (this.builds.some(b => b.x === x && b.y === y)) return fail('Already being built here.');
+    if (!this.canBuild(x, y)) return fail('Tap a glowing slot next to the station.');
     const label = BUILD_INFO[kind].label;
     if (this.res.plating >= 1) {
       this.res.plating -= 1;
     } else {
       const cost = this.buildCost(kind);
-      if (!this.canPay(cost)) return fail(`Not enough resources for ${label}.`);
+      const short = (Object.entries(cost) as [Resource, number][])
+        .filter(([r, v]) => this.res[r] < v)
+        .map(([r, v]) => `${Math.ceil(v - this.res[r])} more ${r}`);
+      if (short.length) return fail(`${label} needs ${short.join(', ')}.`);
       this.pay(cost);
     }
     this.builds.push({ x, y, kind, progress: 0 });

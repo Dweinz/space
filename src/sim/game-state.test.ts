@@ -31,6 +31,15 @@ describe('GameState', () => {
     expect(s.res.metal).toBe(before - 30);
   });
 
+  it('names the missing resource when a build is short', () => {
+    const s = new GameState(calm);
+    s.res.metal = 90;
+    s.res.energy = 5;
+    const res = s.requestBuild(0, 1, 'dock');
+    expect(res.ok).toBe(false);
+    expect(res.msg).toContain('5 more energy');
+  });
+
   it('tells the player what blocks a job', () => {
     const s = new GameState(calm);
     const cy = s.workers[2];
