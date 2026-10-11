@@ -44,6 +44,7 @@ export class SpaceScene extends Phaser.Scene {
   private clock = 0;
   private pinchDist = 0;
   private lastSheet = 0;
+  private fingers = new Map<number, { x: number; y: number }>();
 
   constructor() {
     super('space');
@@ -56,6 +57,19 @@ export class SpaceScene extends Phaser.Scene {
 
     this.fitView();
     this.scale.on(Phaser.Scale.Events.RESIZE, this.fitView, this);
+
+    const canvas = this.game.canvas;
+    window.addEventListener('pointerdown', e => {
+      if (e.target === canvas) this.fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    });
+    window.addEventListener('pointermove', e => {
+      if (this.fingers.has(e.pointerId)) this.fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    });
+    const release = (e: PointerEvent): void => {
+      this.fingers.delete(e.pointerId);
+    };
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
     const cam = this.cameras.main;
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
@@ -115,14 +129,18 @@ export class SpaceScene extends Phaser.Scene {
     cam.centerOn(0, 24 + sheet / (2 * cam.zoom));
   }
 
-  /** Two fingers on the canvas: scale the zoom by how far apart they move. */
+  /**
+   * Two fingers on the canvas: scale the zoom by how far apart they move.
+   * Pointers are tracked here, not via Phaser's list, because a release that lands on the
+   * HUD overlay can leave a pointer stuck "down" and turn every tap into a pinch.
+   */
   private pinch(): void {
-    const down = this.input.manager.pointers.filter(p => p.isDown);
-    if (down.length < 2) {
+    const pts = [...this.fingers.values()];
+    if (pts.length < 2) {
       this.pinchDist = 0;
       return;
     }
-    const [a, b] = down;
+    const [a, b] = pts;
     const dist = Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y);
     const cam = this.cameras.main;
     if (this.pinchDist > 0) cam.setZoom(Phaser.Math.Clamp(cam.zoom * (dist / this.pinchDist), 0.6, 2.4));
