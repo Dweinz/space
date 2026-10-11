@@ -216,3 +216,13 @@ button small { font-size: 10px; }
 @media (pointer: coarse) {
   button { min-height: 40px; }
 }
+
+/* Colour grade for the 3D view: a little more saturation and contrast, with a soft vignette. */
+#game canvas { filter: saturate(1.2) contrast(1.06) brightness(1.04); }
+#game::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(4, 8, 24, 0.55) 100%);
+}

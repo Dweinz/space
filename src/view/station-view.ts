@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import type { Build, Door, GameState, Job, Room, RoomKind, Worker } from '@/sim/game-state';
 import { hud, ui } from '@/ui/hud';
 
@@ -8,19 +13,19 @@ const WALL_H = 1.1;
 const TILT = THREE.MathUtils.degToRad(60); // camera angle above the floor
 const FOV = 35;
 const WALK_SPEED = 2.4;
-const HULL = 0x1b2236;
-const WALL_COLOR = 0x3a4766;
-const SLOT_COLOR = 0x3fd0c4;
-const BG = 0x070b14;
+const HULL = 0x2a3a64;
+const WALL_COLOR = 0x6d7fb0;
+const SLOT_COLOR = 0x46f0e0;
+const BG = 0x0a1230;
 const ACCENT: Record<RoomKind, number> = {
-  core: 0x3fd0c4,
-  life: 0x7ee08a,
-  lab: 0xb48cff,
-  dock: 0xf5c451,
-  quarters: 0x7fb2ff,
-  hydro: 0x4fe0a8,
-  workshop: 0xe8a04a,
-  medbay: 0xf08ac8,
+  core: 0x35e0d0,
+  life: 0x7cf08a,
+  lab: 0xb07cff,
+  dock: 0xffc94a,
+  quarters: 0x6fb0ff,
+  hydro: 0x4ff0b0,
+  workshop: 0xffa050,
+  medbay: 0xff7ad0,
 };
 const JOB_COLOR: Record<Job, number> = {
   engineer: 0xffb020,
@@ -78,6 +83,7 @@ interface WorkerView {
   head: THREE.Mesh;
   pack: THREE.Mesh;
   packMat: THREE.MeshStandardMaterial;
+  badge: THREE.Sprite;
   legs: THREE.Group[];
   pos: THREE.Vector3;
   route: { p: THREE.Vector3; room?: number }[];
@@ -148,6 +154,12 @@ function shadowify<T extends THREE.Object3D>(obj: T): T {
     if (c instanceof THREE.Mesh) {
       c.castShadow = true;
       c.receiveShadow = true;
+      // The kit's metal is very dark under plain lighting; make it matte so props read as objects.
+      const m = c.material;
+      if (m instanceof THREE.MeshStandardMaterial) {
+        m.metalness = Math.min(m.metalness, 0.15);
+        m.roughness = Math.max(m.roughness, 0.6);
+      }
     }
   });
   return obj;
@@ -209,8 +221,34 @@ function stars(): THREE.Points {
   return new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 0.8 }));
 }
 
+const JOB_LETTER: Record<Job, string> = { engineer: 'B', salvage: 'S', research: 'R', trade: 'T', idle: 'Z' };
+
+/** A rounded badge texture in the job's colour, shown above a bot's head. */
+function badgeTexture(job: Job): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 64;
+  const g = c.getContext('2d') as CanvasRenderingContext2D;
+  g.fillStyle = `#${JOB_COLOR[job].toString(16).padStart(6, '0')}`;
+  g.beginPath();
+  g.arc(32, 32, 26, 0, Math.PI * 2);
+  g.fill();
+  g.lineWidth = 5;
+  g.strokeStyle = '#ffffff';
+  g.stroke();
+  g.fillStyle = '#0a1230';
+  g.font = 'bold 34px system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(JOB_LETTER[job], 32, 35);
+  return new THREE.CanvasTexture(c);
+}
+
 export class StationView {
   private readonly renderer = new THREE.WebGLRenderer({ antialias: true });
+  private readonly composer: EffectComposer;
+  private readonly bloom: UnrealBloomPass;
+  private readonly badges = new Map<Job, THREE.CanvasTexture>();
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 500);
   private readonly raycaster = new THREE.Raycaster();
@@ -242,7 +280,11 @@ export class StationView {
     this.renderer.setClearColor(BG);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.1;
     container.appendChild(this.renderer.domElement);
+    this.composer = new EffectComposer(this.renderer);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.55, 0.6, 0.8);
     this.scene.fog = new THREE.Fog(BG, 45, 130);
 
     this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x1a2236, 0.9));
@@ -255,7 +297,7 @@ export class StationView {
     this.scene.add(sun);
 
     // Ground is 180 cells square and its grid lines sit exactly on cell edges.
-    const groundTex = panelTexture('#0b1020', 'rgba(120,150,200,0.12)', 180, false);
+    const groundTex = panelTexture('#10204a', 'rgba(120,170,255,0.22)', 180, false);
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(180 * S, 180 * S).rotateX(-Math.PI / 2),
       new THREE.MeshStandardMaterial({ map: groundTex, roughness: 1 }),
@@ -264,6 +306,9 @@ export class StationView {
     ground.receiveShadow = true;
     this.scene.add(ground, stars());
 
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.composer.addPass(this.bloom);
+    this.composer.addPass(new OutputPass());
     this.resize();
     window.addEventListener('resize', () => this.resize());
     this.setupInput();
@@ -276,13 +321,15 @@ export class StationView {
     this.sync(state);
     this.animate(dt, state);
     this.updateCamera(state);
-    this.renderer.render(this.scene, this.camera);
+    this.composer.render();
   }
 
   private resize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
     this.renderer.setSize(w, h);
+    this.composer.setSize(w, h);
+    this.bloom.resolution.set(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
@@ -300,8 +347,8 @@ export class StationView {
   private createRoom(r: Room): void {
     const [cx, cz] = cellCentre(r.x, r.y);
     const floorMat = new THREE.MeshStandardMaterial({ color: HULL, map: this.floorTex, roughness: 0.7, metalness: 0.2 });
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(S * 0.96, 0.12, S * 0.96), floorMat);
-    floor.position.set(cx, 0.06, cz);
+    const floor = new THREE.Mesh(new RoundedBoxGeometry(S * 0.94, 0.16, S * 0.94, 3, 0.06), floorMat);
+    floor.position.set(cx, 0.08, cz);
     floor.receiveShadow = true;
     const trim = new THREE.LineSegments(
       new THREE.EdgesGeometry(floor.geometry),
@@ -342,8 +389,8 @@ export class StationView {
       const [bx, bz] = boundary(rx, ry, ex, ey);
       const geo =
         ex !== rx
-          ? new THREE.BoxGeometry(0.14, WALL_H, S * 0.96)
-          : new THREE.BoxGeometry(S * 0.96, WALL_H, 0.14);
+          ? new RoundedBoxGeometry(0.16, WALL_H, S * 0.94, 2, 0.05)
+          : new RoundedBoxGeometry(S * 0.94, WALL_H, 0.16, 2, 0.05);
       const mesh = new THREE.Mesh(geo, this.wallMat);
       mesh.position.set(bx, WALL_H / 2, bz);
       mesh.castShadow = true;
@@ -467,12 +514,22 @@ export class StationView {
     const [cx, cz] = cellCentre(home.x, home.y);
     const suit = new THREE.MeshStandardMaterial({ color: 0xdfe6f3, roughness: 0.6 });
     const packMat = new THREE.MeshStandardMaterial({ color: JOB_COLOR[w.job], emissive: JOB_COLOR[w.job], emissiveIntensity: 0.35 });
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.2, 4, 10), suit);
+    const torso = new THREE.Mesh(new RoundedBoxGeometry(0.3, 0.34, 0.24, 3, 0.08), suit);
     torso.position.y = 0.5;
     const pack = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.1), packMat);
     pack.position.set(0, 0.5, -0.19);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.14, 14, 10), new THREE.MeshStandardMaterial({ color: 0xe0c3a0 }));
-    head.position.y = 0.9;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 12), suit);
+    head.position.y = 0.92;
+    const visor = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 0.1, 0.03),
+      new THREE.MeshStandardMaterial({ color: JOB_COLOR[w.job], emissive: JOB_COLOR[w.job], emissiveIntensity: 1.2 }),
+    );
+    visor.position.set(0, 0.02, 0.15);
+    head.add(visor);
+    if (!this.badges.has(w.job)) this.badges.set(w.job, badgeTexture(w.job));
+    const badge = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.badges.get(w.job) }));
+    badge.position.y = 1.35;
+    badge.scale.setScalar(0.42);
     const legs: THREE.Group[] = [];
     for (const side of [-1, 1]) {
       const pivot = new THREE.Group();
@@ -483,7 +540,7 @@ export class StationView {
       legs.push(pivot);
     }
     const group = new THREE.Group();
-    group.add(torso, pack, head, ...legs);
+    group.add(torso, pack, head, badge, ...legs);
     shadowify(group);
     group.position.set(cx, 0, cz);
     this.scene.add(group);
@@ -493,6 +550,7 @@ export class StationView {
       head,
       pack,
       packMat,
+      badge,
       legs,
       pos: new THREE.Vector3(cx, 0, cz),
       route: [],
@@ -561,7 +619,8 @@ export class StationView {
           : Math.sin(t * 2) * 0.015;
       v.torso.position.y = 0.5 + bob;
       v.pack.position.y = 0.5 + bob;
-      v.head.position.y = 0.9 + bob;
+      v.head.position.y = 0.92 + bob;
+      v.badge.position.y = 1.35 + bob;
       v.legs.forEach((leg, i) => {
         leg.rotation.x = walking ? Math.sin(t * 10 + i * Math.PI) * 0.6 : 0;
       });
@@ -599,7 +658,7 @@ export class StationView {
       const v = this.rooms.get(r.id);
       if (!v) continue;
       const pulse = (Math.sin(this.clock * 9) + 1) / 2;
-      v.floorMat.color.setHex(mix(HULL, ACCENT[r.kind], 0.15 + 0.6 * (r.o2 / 100)));
+      v.floorMat.color.setHex(mix(HULL, ACCENT[r.kind], 0.25 + 0.6 * (r.o2 / 100)));
       v.floorMat.emissive.setHex(r.breach > 0 ? mix(0x000000, 0xff3030, 0.3 + 0.5 * pulse) : 0x000000);
     }
 
