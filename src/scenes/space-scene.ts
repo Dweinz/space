@@ -198,16 +198,31 @@ export class SpaceScene extends Phaser.Scene {
       this.poly(this.top(x, y, 0), slotColor, hot ? 0.25 : 0.06, slotColor, hot ? 1 : 0.4);
     }
 
-    // Queued chambers: a translucent block rising as the engineers progress.
+    // Queued chambers: an outline of the finished chamber, a pulsing block rising as the
+    // engineers progress, and a progress bar above it.
     for (const b of s.builds) {
       const accent = ACCENT[b.kind];
-      const h = Math.max(2, WALL * b.progress);
-      this.poly(this.top(b.x, b.y, h), accent, 0.45, accent, 1);
-      const [cx, cy] = project(b.x + 0.5, b.y + 0.5, WALL + 14);
-      g.fillStyle(0x000000, 0.6);
-      g.fillRect(cx - 24, cy - 3, 48, 6);
+      const pulse = 0.75 + 0.25 * Math.sin(this.clock * 6);
+      const x = b.x;
+      const y = b.y;
+      const h = 12 + (WALL - 12) * b.progress;
+      this.poly(this.top(x, y, WALL), accent, 0, accent, 0.9); // finished height
+      this.poly(
+        [project(x + 1, y, 0), project(x + 1, y + 1, 0), project(x + 1, y + 1, h), project(x + 1, y, h)],
+        mix(DARK, accent, 0.35),
+        0.8 * pulse,
+      );
+      this.poly(
+        [project(x, y + 1, 0), project(x + 1, y + 1, 0), project(x + 1, y + 1, h), project(x, y + 1, h)],
+        mix(DARK, accent, 0.2),
+        0.8 * pulse,
+      );
+      this.poly(this.top(x, y, h), accent, 0.85 * pulse, accent, 1);
+      const [cx, cy] = project(x + 0.5, y + 0.5, WALL + 16);
+      g.fillStyle(0x2a3550, 0.95);
+      g.fillRect(cx - 36, cy - 5, 72, 10);
       g.fillStyle(accent, 1);
-      g.fillRect(cx - 24, cy - 3, 48 * b.progress, 6);
+      g.fillRect(cx - 36, cy - 5, 72 * b.progress, 10);
     }
 
     // Back-to-front so nearer chambers overlap farther ones.
