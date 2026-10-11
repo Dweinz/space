@@ -43,6 +43,7 @@ export class SpaceScene extends Phaser.Scene {
   private press: { x: number; y: number; scrollX: number; scrollY: number; moved: boolean } | null = null;
   private clock = 0;
   private pinchDist = 0;
+  private lastSheet = 0;
 
   constructor() {
     super('space');
@@ -53,10 +54,9 @@ export class SpaceScene extends Phaser.Scene {
     hud.init(this.state);
     this.g = this.add.graphics();
 
+    this.fitView();
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.fitView, this);
     const cam = this.cameras.main;
-    cam.centerOn(0, 24);
-    this.fitZoom();
-    this.scale.on(Phaser.Scale.Events.RESIZE, this.fitZoom, this);
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       this.press = { x: p.x, y: p.y, scrollX: cam.scrollX, scrollY: cam.scrollY, moved: false };
@@ -85,16 +85,34 @@ export class SpaceScene extends Phaser.Scene {
     const dt = Math.min(delta, 100) / 1000;
     this.clock += dt;
     this.pinch();
+    const sheet = this.openSheetPx();
+    if (sheet !== this.lastSheet) {
+      this.lastSheet = sheet;
+      this.fitView();
+    }
     this.state.step(dt);
     this.draw();
     hud.tick(dt);
   }
 
-  /** Zoom so the whole station fits the screen, clamped so slots stay tappable on phones. */
-  private fitZoom(): void {
+  /** How many screen pixels an open phone menu covers at the bottom (0 when none is open). */
+  private openSheetPx(): number {
+    const panel = document.querySelector<HTMLElement>('.panel.open');
+    return panel ? Math.round(window.innerHeight - panel.getBoundingClientRect().top) : 0;
+  }
+
+  /**
+   * Fit the whole station into the area not covered by an open menu, and centre it there.
+   * Runs on load, on resize, and whenever a menu opens or closes.
+   */
+  private fitView(): void {
     const { width, height } = this.scale;
-    const zoom = Math.min(width / 700, height / 600);
-    this.cameras.main.setZoom(Phaser.Math.Clamp(zoom, 0.9, 1.3));
+    const sheet = this.openSheetPx();
+    const cam = this.cameras.main;
+    const zoom = Math.min(width / 700, (height - sheet) / 600);
+    cam.setZoom(Phaser.Math.Clamp(zoom, 0.7, 1.3));
+    // Move the camera down by half the covered area so the station lands in the visible part.
+    cam.centerOn(0, 24 + sheet / (2 * cam.zoom));
   }
 
   /** Two fingers on the canvas: scale the zoom by how far apart they move. */

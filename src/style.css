@@ -174,7 +174,7 @@ button small { font-size: 10px; }
     right: 8px;
     bottom: calc(66px + env(safe-area-inset-bottom));
     width: auto;
-    max-height: 50dvh;
+    max-height: 42dvh;
     overflow: auto;
     transform: none;
     box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
