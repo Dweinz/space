@@ -119,6 +119,7 @@ button {
 button:hover,
 button.on { border-color: var(--accent); }
 button.on { background: #1c2d4d; }
+button.blocked { opacity: 0.6; }
 button small { font-size: 10px; }
 
 #palette { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }

@@ -109,15 +109,31 @@ function render(): void {
           .join(''),
   );
 
+  // What is still missing for a chamber; empty when it is affordable (a plating token pays for any chamber).
+  const missing = (k: BuildKind): string[] => {
+    if (s.res.plating >= 1) return [];
+    return (Object.entries(s.buildCost(k)) as [Resource, number][])
+      .filter(([r, v]) => s.res[r] < v)
+      .map(([r, v]) => `${Math.ceil(v - s.res[r])} more ${r}`);
+  };
   const palette = (Object.keys(BUILD_INFO) as BuildKind[])
     .map(k => {
-      const cost = Object.entries(BUILD_INFO[k].cost)
+      const short = missing(k);
+      const cost = Object.entries(s.buildCost(k))
         .map(([r, v]) => `${v} ${r}`)
         .join(' · ');
-      return `<button data-act="kind" data-val="${k}" class="${ui.buildKind === k ? 'on' : ''}">${BUILD_INFO[k].label}<small>${cost}</small></button>`;
+      const cls = [ui.buildKind === k ? 'on' : '', short.length ? 'blocked' : ''].join(' ');
+      const line = short.length ? `need ${short.join(', ')}` : cost;
+      return `<button data-act="kind" data-val="${k}" class="${cls}">${BUILD_INFO[k].label}<small>${line}</small></button>`;
     })
     .join('');
-  put('palette', `${palette}<span class="dim">Pick a chamber, then tap a glowing slot.</span>`);
+  const status =
+    s.res.plating >= 1
+      ? 'A plating token is ready: the next chamber is free.'
+      : missing(ui.buildKind).length
+        ? `${BUILD_INFO[ui.buildKind].label} needs ${missing(ui.buildKind).join(', ')}. Metal comes from salvage.`
+        : 'Pick a chamber, then tap a glowing slot.';
+  put('palette', `${palette}<span class="dim">${status}</span>`);
 
   const builds = s.builds
     .map(b => `<div>Building ${BUILD_INFO[b.kind].label}… ${Math.floor(b.progress * 100)}%</div>`)
