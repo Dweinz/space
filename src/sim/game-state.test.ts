@@ -23,6 +23,15 @@ describe('GameState', () => {
     expect(quarters.o2).toBeGreaterThan(5);
   });
 
+  it('routes workers through doors', () => {
+    const s = new GameState(calm);
+    s.requestBuild(1, 0, 'quarters');
+    s.requestBuild(2, 0, 'lab');
+    run(s, 30);
+    const [core, quarters, lab] = s.rooms.map(r => r.id);
+    expect(s.roomPath(core, lab)).toEqual([core, quarters, lab]);
+  });
+
   it('lets a chamber attach to one still under construction', () => {
     const s = new GameState(calm);
     expect(s.requestBuild(1, 0, 'quarters').ok).toBe(true);

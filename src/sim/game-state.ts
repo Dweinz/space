@@ -141,6 +141,48 @@ export class GameState {
     return w.health > 0 && (w.job === 'salvage' || this.room(w.roomId).o2 >= SUFFOCATE_BELOW);
   }
 
+  /** Where a worker should stand for their job: a chamber, a build site, or outside (salvage). */
+  workSpot(w: Worker): { roomId: number; cell?: [number, number]; outside?: boolean } {
+    const home = w.roomId;
+    const roomOfKind = (kind: RoomKind): number => this.rooms.find(r => r.kind === kind)?.id ?? home;
+    if (w.job === 'salvage') return { roomId: this.rooms[0].id, outside: true };
+    if (w.job === 'research') return { roomId: roomOfKind('lab') };
+    if (w.job === 'trade') return { roomId: roomOfKind('dock') };
+    if (w.job === 'engineer') {
+      const breached = this.rooms.find(r => r.breach > 0);
+      if (breached) return { roomId: breached.id };
+      const b = this.builds[0];
+      if (b) {
+        const next = DIRS.map(([dx, dy]) => this.roomAt(b.x + dx, b.y + dy)).find(r => r !== undefined);
+        return { roomId: next?.id ?? home, cell: [b.x, b.y] };
+      }
+    }
+    return { roomId: home };
+  }
+
+  /** Chambers to walk through, from `fromId` to `toId` inclusive, following doors (open or closed). */
+  roomPath(fromId: number, toId: number): number[] {
+    const prev = new Map<number, number | null>([[fromId, null]]);
+    const queue: number[] = [fromId];
+    for (let i = 0; i < queue.length; i++) {
+      const cur = queue[i];
+      for (const d of this.doors) {
+        const next = d.a === cur ? d.b : d.b === cur ? d.a : undefined;
+        if (next === undefined || prev.has(next)) continue;
+        prev.set(next, cur);
+        queue.push(next);
+      }
+    }
+    if (!prev.has(toId)) return [fromId];
+    const path: number[] = [];
+    let id: number | null = toId;
+    while (id !== null) {
+      path.unshift(id);
+      id = prev.get(id) ?? null;
+    }
+    return path;
+  }
+
   /** One line telling the player what this worker is doing, or what is blocking them. */
   jobNote(w: Worker): string {
     if (w.job === 'idle') return 'No task. Pick a job above to put them to work.';
