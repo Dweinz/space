@@ -23,6 +23,15 @@ describe('GameState', () => {
     expect(quarters.o2).toBeGreaterThan(5);
   });
 
+  it('lets a chamber attach to one still under construction', () => {
+    const s = new GameState(calm);
+    expect(s.requestBuild(1, 0, 'quarters').ok).toBe(true);
+    expect(s.requestBuild(2, 0, 'lab').ok).toBe(true); // next to the queued quarters
+    run(s, 30);
+    expect(s.rooms).toHaveLength(3);
+    expect(s.doors).toHaveLength(2); // core-quarters and quarters-lab
+  });
+
   it('charges for chambers and only builds next to the station', () => {
     const s = new GameState(calm);
     expect(s.requestBuild(5, 5, 'lab').ok).toBe(false);

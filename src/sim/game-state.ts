@@ -157,7 +157,10 @@ export class GameState {
 
   canBuild(x: number, y: number): boolean {
     if (this.roomAt(x, y) || this.builds.some(b => b.x === x && b.y === y)) return false;
-    return DIRS.some(([dx, dy]) => this.roomAt(x + dx, y + dy) !== undefined);
+    // Attach to finished chambers or to ones still under construction; doors connect on completion.
+    return DIRS.some(
+      ([dx, dy]) => this.roomAt(x + dx, y + dy) !== undefined || this.builds.some(b => b.x === x + dx && b.y === y + dy),
+    );
   }
 
   buildCost(kind: BuildKind): Cost {
