@@ -31,6 +31,13 @@ describe('GameState', () => {
     expect(s.res.metal).toBe(before - 30);
   });
 
+  it('reports the metal income from salvage crew', () => {
+    const s = new GameState(calm);
+    expect(s.metalPerSecond()).toBeCloseTo(0.45); // one salvage crew at the start
+    s.setJob(s.workers[0].id, 'salvage');
+    expect(s.metalPerSecond()).toBeCloseTo(0.9);
+  });
+
   it('names the missing resource when a build is short', () => {
     const s = new GameState(calm);
     s.res.metal = 90;

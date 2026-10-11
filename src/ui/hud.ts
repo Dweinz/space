@@ -127,11 +127,20 @@ function render(): void {
       return `<button data-act="kind" data-val="${k}" class="${cls}">${BUILD_INFO[k].label}<small>${line}</small></button>`;
     })
     .join('');
+  const chamber = ui.buildKind;
+  const shortMetal = Math.ceil((s.buildCost(chamber).metal ?? 0) - s.res.metal);
+  const rate = s.metalPerSecond();
+  const eta =
+    shortMetal <= 0
+      ? ''
+      : rate > 0
+        ? ` About ${Math.ceil(shortMetal / rate)}s of salvage to go (metal ≈ ${rate.toFixed(2)}/s).`
+        : ' Assign a crew member to Salvage to earn metal.';
   const status =
     s.res.plating >= 1
       ? 'A plating token is ready: the next chamber is free.'
-      : missing(ui.buildKind).length
-        ? `${BUILD_INFO[ui.buildKind].label} needs ${missing(ui.buildKind).join(', ')}. Metal comes from salvage.`
+      : missing(chamber).length
+        ? `${BUILD_INFO[chamber].label} needs ${missing(chamber).join(', ')}.${eta}`
         : 'Pick a chamber, then tap a glowing slot.';
   put('palette', `${palette}<span class="dim">${status}</span>`);
 

@@ -116,6 +116,13 @@ export class GameState {
     return CORE_BEDS + QUARTERS_BEDS * this.count('quarters');
   }
 
+  /** Average metal per second from the salvage crew working right now (the only metal source). */
+  metalPerSecond(): number {
+    const crew = this.workers.filter(w => w.job === 'salvage' && this.productive(w)).length;
+    const mult = this.has('drones') ? 1.5 : 1;
+    return (crew * 0.3 * 12 * mult) / SALVAGE_EVERY;
+  }
+
   /** A worker only produces when they can breathe; salvage crews work outside in suits. */
   productive(w: Worker): boolean {
     return w.health > 0 && (w.job === 'salvage' || this.room(w.roomId).o2 >= SUFFOCATE_BELOW);
