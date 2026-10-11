@@ -14,7 +14,7 @@ const ACCENT: Record<RoomKind, number> = {
   life: 0x7ee08a,
   lab: 0xb48cff,
   dock: 0xf5c451,
-  quarters: 0xff8f7a,
+  quarters: 0x7fb2ff,
 };
 
 type Pt = [number, number];
@@ -191,10 +191,23 @@ export class SpaceScene extends Phaser.Scene {
         if (s.canBuild(x, y)) slots.set(`${x},${y}`, [x, y]);
       }
     }
-    const slotColor = ACCENT[ui.buildKind];
+    // Neutral slots: red is reserved for closed doors and breaches.
+    const slotColor = 0x9fb3d9;
     for (const [x, y] of slots.values()) {
       const hot = this.hover !== null && this.hover[0] === x && this.hover[1] === y;
-      this.poly(this.top(x, y, 0), slotColor, hot ? 0.3 : 0.06, slotColor, hot ? 1 : 0.5);
+      this.poly(this.top(x, y, 0), slotColor, hot ? 0.25 : 0.06, slotColor, hot ? 1 : 0.4);
+    }
+
+    // Queued chambers: a translucent block rising as the engineers progress.
+    for (const b of s.builds) {
+      const accent = ACCENT[b.kind];
+      const h = Math.max(2, WALL * b.progress);
+      this.poly(this.top(b.x, b.y, h), accent, 0.45, accent, 1);
+      const [cx, cy] = project(b.x + 0.5, b.y + 0.5, WALL + 14);
+      g.fillStyle(0x000000, 0.6);
+      g.fillRect(cx - 24, cy - 3, 48, 6);
+      g.fillStyle(accent, 1);
+      g.fillRect(cx - 24, cy - 3, 48 * b.progress, 6);
     }
 
     // Back-to-front so nearer chambers overlap farther ones.
