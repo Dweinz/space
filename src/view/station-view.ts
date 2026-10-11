@@ -34,7 +34,6 @@ const JOB_COLOR: Record<Job, number> = {
 const PROP_NAMES = [
   'Prop_Barrel1',
   'Prop_Chair',
-  'Prop_Chest',
   'Prop_Crate',
   'Prop_Crate_Large',
   'Prop_Desk_Medium',
@@ -51,7 +50,7 @@ type Models = Partial<Record<PropName, THREE.Object3D>>;
 
 /** Props per chamber type: [model, size, x, z] with x, z in cell units from -0.5 to 0.5. */
 const FURNISH: Record<RoomKind, [PropName, number, number, number][]> = {
-  core: [['Prop_Crate', 0.5, -0.3, -0.3], ['Prop_Crate_Large', 0.6, 0.3, 0.25], ['Prop_Chest', 0.4, -0.25, 0.3]],
+  core: [['Prop_Crate', 0.5, -0.3, -0.3], ['Prop_Crate_Large', 0.6, 0.3, 0.25], ['Prop_Barrel1', 0.4, -0.25, 0.3]],
   life: [['Prop_Barrel1', 0.45, -0.3, -0.25], ['Prop_Barrel1', 0.45, 0.25, 0.3]],
   lab: [['Prop_Desk_Medium', 0.7, 0, -0.2], ['Prop_Chair', 0.3, 0, 0.15], ['Prop_SatelliteDish', 0.5, 0.3, 0.3]],
   dock: [['Prop_Crate_Large', 0.6, -0.25, -0.2], ['Prop_Crate', 0.45, 0.25, 0.2], ['Prop_Barrel1', 0.4, 0.25, -0.3]],
@@ -118,7 +117,7 @@ const edgeKey = (ax: number, ay: number, bx: number, by: number): string => {
 const mix = (a: number, b: number, t: number): number => new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
 
 /** Floor texture: a fine panel grid, so rooms read as built structures rather than flat slabs. */
-function panelTexture(base: string, line: string, repeat: number): THREE.CanvasTexture {
+function panelTexture(base: string, line: string, repeat: number, midLines: boolean): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 256;
   c.height = 256;
@@ -128,12 +127,14 @@ function panelTexture(base: string, line: string, repeat: number): THREE.CanvasT
   g.strokeStyle = line;
   g.lineWidth = 4;
   g.strokeRect(0, 0, 256, 256);
-  g.beginPath();
-  g.moveTo(128, 0);
-  g.lineTo(128, 256);
-  g.moveTo(0, 128);
-  g.lineTo(256, 128);
-  g.stroke();
+  if (midLines) {
+    g.beginPath();
+    g.moveTo(128, 0);
+    g.lineTo(128, 256);
+    g.moveTo(0, 128);
+    g.lineTo(256, 128);
+    g.stroke();
+  }
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.RepeatWrapping;
@@ -165,10 +166,16 @@ function makeProp(models: Models, name: PropName, size: number): THREE.Object3D 
     return shadowify(wrap);
   }
   const obj = src.clone(true);
-  const box = new THREE.Box3().setFromObject(obj);
+  // Child transforms of the kit's models are only computed on update, so refresh them before measuring.
+  obj.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(obj, true);
   const extent = Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z) || 1;
-  obj.scale.setScalar(size / extent);
-  obj.position.y -= new THREE.Box3().setFromObject(obj).min.y; // stand on the floor
+  obj.scale.multiplyScalar(size / extent); // keep the model's own root scale
+  obj.updateMatrixWorld(true);
+  // The kit's models aren't centred on their origin, so centre the footprint and stand it on the floor.
+  const scaled = new THREE.Box3().setFromObject(obj, true);
+  const centre = scaled.getCenter(new THREE.Vector3());
+  obj.position.set(-centre.x, -scaled.min.y, -centre.z);
   wrap.add(obj);
   return shadowify(wrap);
 }
@@ -217,7 +224,7 @@ export class StationView {
   private readonly fingers = new Map<number, { x: number; y: number }>();
   private readonly pan = new THREE.Vector2();
   private readonly wallMat = new THREE.MeshStandardMaterial({ color: WALL_COLOR, roughness: 0.55, metalness: 0.35 });
-  private readonly floorTex = panelTexture('#ffffff', 'rgba(0,0,0,0.35)', 1);
+  private readonly floorTex = panelTexture('#ffffff', 'rgba(0,0,0,0.35)', 1, true);
   private readonly blockGeo = new THREE.BoxGeometry(S * 0.96, 1, S * 0.96).translate(0, 0.5, 0);
   private press: { x: number; y: number; moved: boolean } | null = null;
   private pinchDist = 0;
@@ -247,9 +254,10 @@ export class StationView {
     sun.shadow.bias = -0.0008;
     this.scene.add(sun);
 
-    const groundTex = panelTexture('#0b1020', 'rgba(120,150,200,0.12)', 60);
+    // Ground is 180 cells square and its grid lines sit exactly on cell edges.
+    const groundTex = panelTexture('#0b1020', 'rgba(120,150,200,0.12)', 180, false);
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2),
+      new THREE.PlaneGeometry(180 * S, 180 * S).rotateX(-Math.PI / 2),
       new THREE.MeshStandardMaterial({ map: groundTex, roughness: 1 }),
     );
     ground.position.y = -0.02;
