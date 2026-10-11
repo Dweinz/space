@@ -42,6 +42,7 @@ export class SpaceScene extends Phaser.Scene {
   private hover: Pt | null = null;
   private press: { x: number; y: number; scrollX: number; scrollY: number; moved: boolean } | null = null;
   private clock = 0;
+  private pinchDist = 0;
 
   constructor() {
     super('space');
@@ -53,8 +54,9 @@ export class SpaceScene extends Phaser.Scene {
     this.g = this.add.graphics();
 
     const cam = this.cameras.main;
-    cam.setZoom(1.3);
     cam.centerOn(0, 24);
+    this.fitZoom();
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.fitZoom, this);
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       this.press = { x: p.x, y: p.y, scrollX: cam.scrollX, scrollY: cam.scrollY, moved: false };
@@ -82,9 +84,32 @@ export class SpaceScene extends Phaser.Scene {
   update(_time: number, delta: number): void {
     const dt = Math.min(delta, 100) / 1000;
     this.clock += dt;
+    this.pinch();
     this.state.step(dt);
     this.draw();
     hud.tick(dt);
+  }
+
+  /** Zoom so the whole station fits the screen, clamped so slots stay tappable on phones. */
+  private fitZoom(): void {
+    const { width, height } = this.scale;
+    const zoom = Math.min(width / 700, height / 600);
+    this.cameras.main.setZoom(Phaser.Math.Clamp(zoom, 0.9, 1.3));
+  }
+
+  /** Two fingers on the canvas: scale the zoom by how far apart they move. */
+  private pinch(): void {
+    const down = this.input.manager.pointers.filter(p => p.isDown);
+    if (down.length < 2) {
+      this.pinchDist = 0;
+      return;
+    }
+    const [a, b] = down;
+    const dist = Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y);
+    const cam = this.cameras.main;
+    if (this.pinchDist > 0) cam.setZoom(Phaser.Math.Clamp(cam.zoom * (dist / this.pinchDist), 0.6, 2.4));
+    this.pinchDist = dist;
+    if (this.press) this.press.moved = true; // a pinch is never a tap
   }
 
   private cellAt(p: Phaser.Input.Pointer): Pt {
@@ -93,10 +118,11 @@ export class SpaceScene extends Phaser.Scene {
   }
 
   private click(p: Phaser.Input.Pointer): void {
+    hud.closeSheets(); // tapping the station gets the menu out of the way
     for (const d of this.state.doors) {
       const e = this.doorEdge(d);
       const [sx, sy] = project(e.mx, e.my, WALL / 2);
-      if (Math.hypot(sx - p.worldX, sy - p.worldY) < 18) {
+      if (Math.hypot(sx - p.worldX, sy - p.worldY) < 24) {
         this.state.toggleDoor(d.id);
         hud.render();
         return;

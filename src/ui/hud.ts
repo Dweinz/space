@@ -95,7 +95,7 @@ function render(): void {
       return `<button data-act="kind" data-val="${k}" class="${ui.buildKind === k ? 'on' : ''}">${BUILD_INFO[k].label}<small>${cost}</small></button>`;
     })
     .join('');
-  put('palette', `${palette}<span class="dim">Click a glowing slot to build.</span>`);
+  put('palette', `${palette}<span class="dim">Tap a glowing slot to build.</span>`);
 
   const builds = s.builds
     .map(b => `<div>Building ${BUILD_INFO[b.kind].label}… ${Math.floor(b.progress * 100)}%</div>`)
@@ -117,7 +117,26 @@ const notify = (r: Result): void => {
   if (!r.ok) toast(r.msg);
 };
 
+// On phones the menus are bottom sheets: one open at a time, opened from the tab bar.
+function closeSheets(): void {
+  document.querySelectorAll('.panel.open').forEach(p => p.classList.remove('open'));
+  document.querySelectorAll('[data-tab].on').forEach(b => b.classList.remove('on'));
+}
+
+function toggleSheet(id: string): void {
+  const open = !$(id).classList.contains('open');
+  closeSheets();
+  if (!open) return;
+  $(id).classList.add('open');
+  document.querySelector<HTMLElement>(`[data-tab="${id}"]`)?.classList.add('on');
+}
+
 document.addEventListener('click', e => {
+  const tab = (e.target as HTMLElement).closest<HTMLElement>('[data-tab]');
+  if (tab) {
+    toggleSheet(tab.dataset.tab ?? '');
+    return;
+  }
   const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
   if (!btn || !game) return;
   const { act, id, val } = btn.dataset;
@@ -142,4 +161,5 @@ export const hud = {
   },
   render,
   toast,
+  closeSheets,
 };
