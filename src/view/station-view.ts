@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import type { Build, BuildKind, Door, GameState, Job, Room, RoomKind, Worker } from '@/sim/game-state';
+import type { Build, Door, GameState, Job, Room, RoomKind, Worker } from '@/sim/game-state';
 import { hud, ui } from '@/ui/hud';
 
 const S = 2.2; // world units per grid cell
@@ -9,7 +9,9 @@ const TILT = THREE.MathUtils.degToRad(60); // camera angle above the floor
 const FOV = 35;
 const WALK_SPEED = 2.4;
 const HULL = 0x1b2236;
-const SLOT_COLOR = 0x9fb3d9;
+const WALL_COLOR = 0x3a4766;
+const SLOT_COLOR = 0x3fd0c4;
+const BG = 0x070b14;
 const ACCENT: Record<RoomKind, number> = {
   core: 0x3fd0c4,
   life: 0x7ee08a,
@@ -49,14 +51,14 @@ type Models = Partial<Record<PropName, THREE.Object3D>>;
 
 /** Props per chamber type: [model, size, x, z] with x, z in cell units from -0.5 to 0.5. */
 const FURNISH: Record<RoomKind, [PropName, number, number, number][]> = {
-  core: [['Prop_Crate', 0.7, -0.3, -0.3], ['Prop_Crate_Large', 0.8, 0.3, 0.25], ['Prop_Chest', 0.5, -0.25, 0.3]],
-  life: [['Prop_Barrel1', 0.6, -0.3, -0.25], ['Prop_Barrel1', 0.6, 0.25, 0.3]],
-  lab: [['Prop_Desk_Medium', 0.9, 0, -0.2], ['Prop_Chair', 0.4, 0, 0.15], ['Prop_SatelliteDish', 0.6, 0.3, 0.3]],
-  dock: [['Prop_Crate_Large', 0.8, -0.25, -0.2], ['Prop_Crate', 0.6, 0.25, 0.2], ['Prop_Barrel1', 0.5, 0.25, -0.3]],
-  quarters: [['Prop_Locker', 0.8, -0.3, -0.3], ['Prop_Shelves_WideTall', 0.9, 0.3, 0.2], ['Prop_Mug', 0.2, 0, 0.1]],
-  hydro: [['Prop_Barrel1', 0.5, -0.3, -0.3], ['Prop_Crate', 0.5, 0.3, 0.3]],
-  workshop: [['Prop_Desk_Small', 0.8, -0.2, -0.25], ['Prop_Chair', 0.4, 0.25, 0.2], ['Prop_Crate', 0.6, 0.3, -0.3]],
-  medbay: [['Prop_Desk_Small', 0.8, 0, -0.25], ['Prop_HealthPack', 0.4, 0.3, 0.25], ['Prop_Syringe', 0.3, -0.3, 0.25]],
+  core: [['Prop_Crate', 0.5, -0.3, -0.3], ['Prop_Crate_Large', 0.6, 0.3, 0.25], ['Prop_Chest', 0.4, -0.25, 0.3]],
+  life: [['Prop_Barrel1', 0.45, -0.3, -0.25], ['Prop_Barrel1', 0.45, 0.25, 0.3]],
+  lab: [['Prop_Desk_Medium', 0.7, 0, -0.2], ['Prop_Chair', 0.3, 0, 0.15], ['Prop_SatelliteDish', 0.5, 0.3, 0.3]],
+  dock: [['Prop_Crate_Large', 0.6, -0.25, -0.2], ['Prop_Crate', 0.45, 0.25, 0.2], ['Prop_Barrel1', 0.4, 0.25, -0.3]],
+  quarters: [['Prop_Locker', 0.6, -0.3, -0.3], ['Prop_Shelves_WideTall', 0.7, 0.3, 0.2], ['Prop_Mug', 0.15, 0, 0.1]],
+  hydro: [['Prop_Barrel1', 0.4, -0.3, -0.3], ['Prop_Crate', 0.4, 0.3, 0.3]],
+  workshop: [['Prop_Desk_Small', 0.6, -0.2, -0.25], ['Prop_Chair', 0.3, 0.25, 0.2], ['Prop_Crate', 0.45, 0.3, -0.3]],
+  medbay: [['Prop_Desk_Small', 0.6, 0, -0.25], ['Prop_HealthPack', 0.3, 0.3, 0.25], ['Prop_Syringe', 0.25, -0.3, 0.25]],
 };
 
 type Cell = [number, number];
@@ -73,9 +75,11 @@ interface BuildView {
 }
 interface WorkerView {
   group: THREE.Group;
-  body: THREE.Mesh;
+  torso: THREE.Mesh;
   head: THREE.Mesh;
-  bodyMat: THREE.MeshStandardMaterial;
+  pack: THREE.Mesh;
+  packMat: THREE.MeshStandardMaterial;
+  legs: THREE.Group[];
   pos: THREE.Vector3;
   route: { p: THREE.Vector3; room?: number }[];
   atRoom: number;
@@ -113,6 +117,41 @@ const edgeKey = (ax: number, ay: number, bx: number, by: number): string => {
 };
 const mix = (a: number, b: number, t: number): number => new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
 
+/** Floor texture: a fine panel grid, so rooms read as built structures rather than flat slabs. */
+function panelTexture(base: string, line: string, repeat: number): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const g = c.getContext('2d') as CanvasRenderingContext2D;
+  g.fillStyle = base;
+  g.fillRect(0, 0, 256, 256);
+  g.strokeStyle = line;
+  g.lineWidth = 4;
+  g.strokeRect(0, 0, 256, 256);
+  g.beginPath();
+  g.moveTo(128, 0);
+  g.lineTo(128, 256);
+  g.moveTo(0, 128);
+  g.lineTo(256, 128);
+  g.stroke();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeat, repeat);
+  return tex;
+}
+
+function shadowify<T extends THREE.Object3D>(obj: T): T {
+  obj.traverse(c => {
+    if (c instanceof THREE.Mesh) {
+      c.castShadow = true;
+      c.receiveShadow = true;
+    }
+  });
+  return obj;
+}
+
 function makeProp(models: Models, name: PropName, size: number): THREE.Object3D {
   const wrap = new THREE.Group();
   const src = models[name];
@@ -123,7 +162,7 @@ function makeProp(models: Models, name: PropName, size: number): THREE.Object3D 
     );
     box.position.y = size * 0.3;
     wrap.add(box);
-    return wrap;
+    return shadowify(wrap);
   }
   const obj = src.clone(true);
   const box = new THREE.Box3().setFromObject(obj);
@@ -131,7 +170,7 @@ function makeProp(models: Models, name: PropName, size: number): THREE.Object3D 
   obj.scale.setScalar(size / extent);
   obj.position.y -= new THREE.Box3().setFromObject(obj).min.y; // stand on the floor
   wrap.add(obj);
-  return wrap;
+  return shadowify(wrap);
 }
 
 function makeShip(kind: 'trader' | 'recruiter'): THREE.Group {
@@ -141,13 +180,14 @@ function makeShip(kind: 'trader' | 'recruiter'): THREE.Group {
   const nose = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.7, 8), hullMat);
   nose.rotation.z = -Math.PI / 2;
   nose.position.x = 1.15;
+  const glow = kind === 'trader' ? 0xf5c451 : 0x7fdcff;
   const stripe = new THREE.Mesh(
     new THREE.BoxGeometry(1.0, 0.1, 0.62),
-    new THREE.MeshStandardMaterial({ color: kind === 'trader' ? 0xf5c451 : 0x7fdcff, emissiveIntensity: 0.6, emissive: kind === 'trader' ? 0xf5c451 : 0x7fdcff }),
+    new THREE.MeshStandardMaterial({ color: glow, emissive: glow, emissiveIntensity: 0.6 }),
   );
   stripe.position.y = 0.2;
   g.add(hull, nose, stripe);
-  return g;
+  return shadowify(g);
 }
 
 function stars(): THREE.Points {
@@ -176,7 +216,8 @@ export class StationView {
   private readonly ships = new Map<number, THREE.Group>();
   private readonly fingers = new Map<number, { x: number; y: number }>();
   private readonly pan = new THREE.Vector2();
-  private readonly wallMat = new THREE.MeshStandardMaterial({ color: HULL, roughness: 0.5, metalness: 0.4 });
+  private readonly wallMat = new THREE.MeshStandardMaterial({ color: WALL_COLOR, roughness: 0.55, metalness: 0.35 });
+  private readonly floorTex = panelTexture('#ffffff', 'rgba(0,0,0,0.35)', 1);
   private readonly blockGeo = new THREE.BoxGeometry(S * 0.96, 1, S * 0.96).translate(0, 0.5, 0);
   private press: { x: number; y: number; moved: boolean } | null = null;
   private pinchDist = 0;
@@ -191,19 +232,30 @@ export class StationView {
     private readonly models: Models,
   ) {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setClearColor(0x070b14);
+    this.renderer.setClearColor(BG);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
-    this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x1a2236, 1.1));
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.6);
-    sun.position.set(6, 14, 8);
+    this.scene.fog = new THREE.Fog(BG, 45, 130);
+
+    this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x1a2236, 0.9));
+    const sun = new THREE.DirectionalLight(0xfff4e6, 1.8);
+    sun.position.set(8, 16, 10);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    Object.assign(sun.shadow.camera, { left: -22, right: 22, top: 22, bottom: -22, near: 1, far: 60 });
+    sun.shadow.bias = -0.0008;
     this.scene.add(sun);
+
+    const groundTex = panelTexture('#0b1020', 'rgba(120,150,200,0.12)', 60);
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2),
-      new THREE.MeshStandardMaterial({ color: 0x05080f, roughness: 1 }),
+      new THREE.MeshStandardMaterial({ map: groundTex, roughness: 1 }),
     );
     ground.position.y = -0.02;
+    ground.receiveShadow = true;
     this.scene.add(ground, stars());
+
     this.resize();
     window.addEventListener('resize', () => this.resize());
     this.setupInput();
@@ -239,9 +291,10 @@ export class StationView {
 
   private createRoom(r: Room): void {
     const [cx, cz] = cellCentre(r.x, r.y);
-    const floorMat = new THREE.MeshStandardMaterial({ color: HULL, roughness: 0.7, metalness: 0.2 });
+    const floorMat = new THREE.MeshStandardMaterial({ color: HULL, map: this.floorTex, roughness: 0.7, metalness: 0.2 });
     const floor = new THREE.Mesh(new THREE.BoxGeometry(S * 0.96, 0.12, S * 0.96), floorMat);
     floor.position.set(cx, 0.06, cz);
+    floor.receiveShadow = true;
     const trim = new THREE.LineSegments(
       new THREE.EdgesGeometry(floor.geometry),
       new THREE.LineBasicMaterial({ color: ACCENT[r.kind] }),
@@ -285,6 +338,8 @@ export class StationView {
           : new THREE.BoxGeometry(S * 0.96, WALL_H, 0.14);
       const mesh = new THREE.Mesh(geo, this.wallMat);
       mesh.position.set(bx, WALL_H / 2, bz);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       this.scene.add(mesh);
       this.walls.set(key, mesh);
     }
@@ -306,6 +361,10 @@ export class StationView {
     this.doors.set(d.id, { panel, mat, openness: d.open ? 1 : 0, alongZ });
   }
 
+  /**
+   * Build markers: a small ring on each free cell next to the station.
+   * The invisible disc underneath is the click target, so the whole cell is tappable.
+   */
   private syncSlots(state: GameState): void {
     const anchors: { x: number; y: number }[] = [...state.rooms, ...state.builds];
     const want = new Map<string, Cell>();
@@ -324,24 +383,20 @@ export class StationView {
     for (const [key, [x, y]] of want) {
       if (this.slots.has(key)) continue;
       const [cx, cz] = cellCentre(x, y);
-      const geo = new THREE.PlaneGeometry(S * 0.92, S * 0.92).rotateX(-Math.PI / 2);
-      const mesh = new THREE.Mesh(
-        geo,
-        new THREE.MeshBasicMaterial({ color: SLOT_COLOR, transparent: true, opacity: 0.1, depthWrite: false }),
+      const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(S * 0.45, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
       );
-      mesh.position.set(cx, 0.03, cz);
-      mesh.add(
-        new THREE.LineSegments(
-          new THREE.EdgesGeometry(geo),
-          new THREE.LineBasicMaterial({ color: SLOT_COLOR, transparent: true, opacity: 0.6 }),
-        ),
+      disc.position.set(cx, 0.03, cz);
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(S * 0.2, S * 0.27, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: SLOT_COLOR, transparent: true, opacity: 0.5, depthWrite: false }),
       );
-      mesh.userData.cell = [x, y];
-      this.scene.add(mesh);
-      this.slots.set(key, mesh);
-    }
-    for (const [key, mesh] of this.slots) {
-      (mesh.material as THREE.MeshBasicMaterial).opacity = key === this.hover ? 0.3 : 0.1;
+      ring.position.y = 0.01;
+      disc.add(ring);
+      disc.userData.cell = [x, y];
+      this.scene.add(disc);
+      this.slots.set(key, disc);
     }
   }
 
@@ -362,7 +417,7 @@ export class StationView {
   /** A queued chamber: a wireframe of the finished size, a block rising as it's built, and a progress bar. */
   private createBuild(key: string, b: Build): void {
     const [cx, cz] = cellCentre(b.x, b.y);
-    const accent = ACCENT[b.kind as BuildKind];
+    const accent = ACCENT[b.kind];
     const group = new THREE.Group();
     const outline = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(S * 0.96, WALL_H, S * 0.96)),
@@ -398,26 +453,39 @@ export class StationView {
     }
   }
 
+  /** A crew member: white suit, job-coloured backpack, and two legs that swing when walking. */
   private createWorker(w: Worker, state: GameState): void {
     const home = state.room(w.roomId);
     const [cx, cz] = cellCentre(home.x, home.y);
-    const bodyMat = new THREE.MeshStandardMaterial({ color: JOB_COLOR[w.job], roughness: 0.5 });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.55, 0.24), bodyMat);
-    body.position.y = 0.42;
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.15, 12, 8),
-      new THREE.MeshStandardMaterial({ color: 0xe0c3a0 }),
-    );
-    head.position.y = 0.86;
+    const suit = new THREE.MeshStandardMaterial({ color: 0xdfe6f3, roughness: 0.6 });
+    const packMat = new THREE.MeshStandardMaterial({ color: JOB_COLOR[w.job], emissive: JOB_COLOR[w.job], emissiveIntensity: 0.35 });
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.2, 4, 10), suit);
+    torso.position.y = 0.5;
+    const pack = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.1), packMat);
+    pack.position.set(0, 0.5, -0.19);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.14, 14, 10), new THREE.MeshStandardMaterial({ color: 0xe0c3a0 }));
+    head.position.y = 0.9;
+    const legs: THREE.Group[] = [];
+    for (const side of [-1, 1]) {
+      const pivot = new THREE.Group();
+      pivot.position.set(side * 0.08, 0.32, 0);
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.32, 0.12), suit);
+      leg.position.y = -0.16;
+      pivot.add(leg);
+      legs.push(pivot);
+    }
     const group = new THREE.Group();
-    group.add(body, head);
+    group.add(torso, pack, head, ...legs);
+    shadowify(group);
     group.position.set(cx, 0, cz);
     this.scene.add(group);
     this.workers.set(w.id, {
       group,
-      body,
+      torso,
       head,
-      bodyMat,
+      pack,
+      packMat,
+      legs,
       pos: new THREE.Vector3(cx, 0, cz),
       route: [],
       atRoom: w.roomId,
@@ -431,7 +499,8 @@ export class StationView {
     for (const w of state.workers) {
       const v = this.workers.get(w.id);
       if (!v) continue;
-      v.bodyMat.color.setHex(JOB_COLOR[w.job]);
+      v.packMat.color.setHex(JOB_COLOR[w.job]);
+      v.packMat.emissive.setHex(JOB_COLOR[w.job]);
       const spot = state.workSpot(w);
 
       let point: THREE.Vector3;
@@ -476,13 +545,18 @@ export class StationView {
 
       const walking = v.route.length > 0;
       const working = !walking && w.job !== 'idle' && state.productive(w);
+      const t = this.clock + v.phase;
       const bob = walking
-        ? Math.abs(Math.sin(this.clock * 12 + v.phase)) * 0.08
+        ? Math.abs(Math.sin(t * 12)) * 0.07
         : working
-          ? Math.abs(Math.sin(this.clock * 7 + v.phase)) * 0.05
-          : Math.sin(this.clock * 2 + v.phase) * 0.015;
-      v.body.position.y = 0.42 + bob;
-      v.head.position.y = 0.86 + bob;
+          ? Math.abs(Math.sin(t * 7)) * 0.05
+          : Math.sin(t * 2) * 0.015;
+      v.torso.position.y = 0.5 + bob;
+      v.pack.position.y = 0.5 + bob;
+      v.head.position.y = 0.9 + bob;
+      v.legs.forEach((leg, i) => {
+        leg.rotation.x = walking ? Math.sin(t * 10 + i * Math.PI) * 0.6 : 0;
+      });
     }
   }
 
@@ -519,6 +593,13 @@ export class StationView {
       const pulse = (Math.sin(this.clock * 9) + 1) / 2;
       v.floorMat.color.setHex(mix(HULL, ACCENT[r.kind], 0.15 + 0.6 * (r.o2 / 100)));
       v.floorMat.emissive.setHex(r.breach > 0 ? mix(0x000000, 0xff3030, 0.3 + 0.5 * pulse) : 0x000000);
+    }
+
+    for (const [key, disc] of this.slots) {
+      const ring = disc.children[0] as THREE.Mesh;
+      const mat = ring.material as THREE.MeshBasicMaterial;
+      const pulse = 0.5 + 0.3 * Math.sin(this.clock * 3 + disc.position.x);
+      mat.opacity = key === this.hover ? 1 : pulse;
     }
 
     for (const b of state.builds) {
