@@ -121,6 +121,22 @@ export class GameState {
     return w.health > 0 && (w.job === 'salvage' || this.room(w.roomId).o2 >= SUFFOCATE_BELOW);
   }
 
+  /** One line telling the player what this worker is doing, or what is blocking them. */
+  jobNote(w: Worker): string {
+    if (w.job === 'idle') return 'No task. Pick a job above to put them to work.';
+    if (w.job === 'salvage') return 'Scavenging outside: finds come every few seconds.';
+    if (!this.productive(w)) return 'Stalled: no oxygen here. Open a door to a life-support room.';
+    if (w.job === 'engineer') {
+      if (this.rooms.some(r => r.breach > 0)) return 'Sealing a hull breach.';
+      if (this.builds.length > 0) return `Building ${BUILD_INFO[this.builds[0].kind].label}.`;
+      return 'Nothing to build. Queue a chamber in the Build menu.';
+    }
+    if (w.job === 'research') {
+      return this.count('lab') > 0 ? 'Making research points in the lab.' : 'Needs a Laboratory to make research points.';
+    }
+    return this.count('dock') > 0 ? 'Ready to close deals with visitors.' : 'Needs a Docking bay before visitors arrive.';
+  }
+
   step(dt: number): void {
     this.oxygen(dt);
     this.life(dt);

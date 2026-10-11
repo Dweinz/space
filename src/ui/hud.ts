@@ -13,21 +13,34 @@ import {
 // Shared UI choice: which chamber type a click on a build slot places.
 export const ui: { buildKind: BuildKind } = { buildKind: 'lab' };
 
-const JOBS: [Job, string][] = [
-  ['engineer', 'Build'],
-  ['salvage', 'Salvage'],
-  ['research', 'Research'],
-  ['trade', 'Trade'],
-  ['idle', 'Idle'],
+const JOBS: [Job, string, string][] = [
+  ['engineer', 'Build', 'Finishes queued chambers and seals hull breaches'],
+  ['salvage', 'Salvage', 'Scavenges outside for metal, energy, plating and new crew'],
+  ['research', 'Research', 'Makes research points (RP) in a Laboratory'],
+  ['trade', 'Trade', 'Lets you accept visitor deals at a Docking bay'],
+  ['idle', 'Idle', 'No task'],
 ];
-const RESOURCES: [Resource, string][] = [
-  ['metal', 'Metal'],
-  ['energy', 'Energy'],
-  ['food', 'Food'],
-  ['credits', 'Credits'],
-  ['rp', 'Research'],
-  ['plating', 'Plating'],
+
+const RESOURCES: [Resource, string, string][] = [
+  ['metal', 'Metal', 'Builds chambers. Found by salvaging meteorites or bought from traders.'],
+  ['energy', 'Energy', 'Builds chambers and runs oxygen generators. Solar gives a steady trickle; debris adds more.'],
+  ['food', 'Food', 'Crew eat constantly; if it runs out, everyone starves. Grown by Hydroponics, or bought from traders.'],
+  ['credits', 'Credits', 'Pays for trades and recruiting. Earned by selling to traders.'],
+  ['rp', 'Research', 'Spent to unlock techs. Made by crew on Research in a Laboratory.'],
+  ['plating', 'Plating', 'Salvaged hull plating. Each one builds a chamber for free.'],
 ];
+
+const GUIDE = `
+<details>
+  <summary>How to grow the station</summary>
+  <p><b>1.</b> Open <b>Build</b>, pick a chamber, then tap a glowing slot next to the station. Engineers finish it over time.</p>
+  <p><b>2.</b> Chambers need oxygen. Open doors let it spread; close one to keep a room sealed off, for example during a breach.</p>
+  <p><b>3.</b> Quarters add crew beds. Recruit visitors only when you have a free bed.</p>
+  <h2>Resources</h2>
+  ${RESOURCES.map(([, label, text]) => `<p><b>${label}:</b> ${text}</p>`).join('')}
+  <h2>Jobs</h2>
+  ${JOBS.map(([, label, text]) => `<p><b>${label}:</b> ${text}</p>`).join('')}
+</details>`;
 
 let game: GameState | null = null;
 let tickAcc = 0;
@@ -47,38 +60,47 @@ function render(): void {
   if (!game) return;
   const s = game;
 
-  put('res', RESOURCES.map(([k, label]) => `<span class="chip">${label} <b>${Math.floor(s.res[k])}</b></span>`).join(''));
+  put(
+    'res',
+    RESOURCES.map(
+      ([k, label, text]) => `<span class="chip" title="${text}">${label} <b>${Math.floor(s.res[k])}</b></span>`,
+    ).join(''),
+  );
 
   const crew = s.workers
     .map(w => {
       const room = s.room(w.roomId);
       const warn = room.o2 < 10 && w.job !== 'salvage' ? ' <span class="warn">low O₂</span>' : '';
       const buttons = JOBS.map(
-        ([job, label]) =>
-          `<button data-act="job" data-id="${w.id}" data-val="${job}" class="${w.job === job ? 'on' : ''}">${label}</button>`,
+        ([job, label, help]) =>
+          `<button data-act="job" data-id="${w.id}" data-val="${job}" title="${help}" class="${w.job === job ? 'on' : ''}">${label}</button>`,
       ).join('');
-      return `<div class="worker"><div class="row"><span>${w.name} <small>${ROOM_LABEL[room.kind]}</small>${warn}</span><span class="hp">${Math.round(w.health)}%</span></div><div class="jobs">${buttons}</div></div>`;
+      return `<div class="worker"><div class="row"><span>${w.name} <small>${ROOM_LABEL[room.kind]}</small>${warn}</span><span class="hp">${Math.round(w.health)}%</span></div><div class="jobs">${buttons}</div><small>${s.jobNote(w)}</small></div>`;
     })
     .join('');
-  put('crew', `<div class="dim">Beds ${s.workers.length} / ${s.housing()}</div>${crew}`);
+  put(
+    'crew',
+    `<div class="dim">Beds ${s.workers.length} / ${s.housing()}. Tap a job to assign it.</div>${crew}`,
+  );
 
   put(
     'research',
-    (Object.keys(TECHS) as TechId[])
-      .map(id => {
-        const t = TECHS[id];
-        const action = s.techs.has(id)
-          ? '<span class="good">learned</span>'
-          : `<button data-act="tech" data-val="${id}">${t.cost} RP</button>`;
-        return `<div class="row"><div><b>${t.name}</b><small>${t.desc}</small></div>${action}</div>`;
-      })
-      .join(''),
+    `<div class="dim">Labs make RP. Spend it here to unlock upgrades.</div>` +
+      (Object.keys(TECHS) as TechId[])
+        .map(id => {
+          const t = TECHS[id];
+          const action = s.techs.has(id)
+            ? '<span class="good">learned</span>'
+            : `<button data-act="tech" data-val="${id}" ${s.res.rp >= t.cost ? '' : 'class="dim"'}>${Math.floor(s.res.rp)} / ${t.cost} RP</button>`;
+          return `<div class="row"><div><b>${t.name}</b><small>${t.desc}</small></div>${action}</div>`;
+        })
+        .join(''),
   );
 
   put(
     'ships',
     s.ships.length === 0
-      ? '<div class="dim">No visitors. Build a docking bay to attract traffic.</div>'
+      ? '<div class="dim">Visitors arrive at a Docking bay. Accept their offers when a crew member is on Trade.</div>'
       : s.ships
           .map(
             sh =>
@@ -95,13 +117,14 @@ function render(): void {
       return `<button data-act="kind" data-val="${k}" class="${ui.buildKind === k ? 'on' : ''}">${BUILD_INFO[k].label}<small>${cost}</small></button>`;
     })
     .join('');
-  put('palette', `${palette}<span class="dim">Tap a glowing slot to build.</span>`);
+  put('palette', `${palette}<span class="dim">Pick a chamber, then tap a glowing slot.</span>`);
 
   const builds = s.builds
     .map(b => `<div>Building ${BUILD_INFO[b.kind].label}… ${Math.floor(b.progress * 100)}%</div>`)
     .join('');
-  put('builds', builds || '<div>No construction. Engineers build queued chambers.</div>');
+  put('builds', builds || '<div>No construction. Queue one here, and an engineer will build it.</div>');
 
+  put('guide', GUIDE);
   put('log', s.log.slice(-6).reverse().map(l => `<div>${l}</div>`).join(''));
 }
 

@@ -31,6 +31,15 @@ describe('GameState', () => {
     expect(s.res.metal).toBe(before - 30);
   });
 
+  it('tells the player what blocks a job', () => {
+    const s = new GameState(calm);
+    const cy = s.workers[2];
+    s.setJob(cy.id, 'research');
+    expect(s.jobNote(cy)).toContain('Laboratory');
+    s.setJob(cy.id, 'trade');
+    expect(s.jobNote(cy)).toContain('Docking bay');
+  });
+
   it('lets an engineer seal a hull breach', () => {
     const s = new GameState(calm);
     s.rooms[0].breach = 6;
